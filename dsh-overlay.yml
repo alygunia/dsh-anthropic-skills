@@ -1,6 +1,18 @@
 # Global overlay: expose this repo's Anthropic skills to every DSH profile and
 # every project, regardless of cwd.
 #
+# ⚠ INERT UNDER THE `web` PROFILE. @deepseek-ai/dsh-web-app disables the host
+#   `skill-filesystem` row (`disabled: true`) and lets each agent preset mount
+#   its own `skill-filesystem` with default roots. Patching the disabled host row
+#   composes fine and shows your paths in `--dump-config`, but nothing mounts it,
+#   so no skill appears. Use the user skill root instead (~/.dsh/skills, rank 400
+#   — see scripts/link-user-skills.ps1 and README "方式二"). This overlay still
+#   works for profiles that keep the host row (e.g. headless).
+#
+# Replace the path below with YOUR checkout path. The Windows form is
+#   E:/Project/dsh-ext/dsh-anthropic-skills/anthropic-skills/skills
+# (forward slashes are fine; the provider runs the value through path.resolve).
+#
 # Apply it for a single boot:
 #   dsh --profile web --patch /mnt/md/liz/src/dsh-ext/dsh-anthropic-skills/dsh-overlay.yml
 #
