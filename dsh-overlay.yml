@@ -1,0 +1,20 @@
+# Global overlay: expose this repo's Anthropic skills to every DSH profile and
+# every project, regardless of cwd.
+#
+# Apply it for a single boot:
+#   dsh --profile web --patch /mnt/md/liz/src/dsh-ext/dsh-anthropic-skills/dsh-overlay.yml
+#
+# Or make it permanent by appending this entry to your profile's own patch layer
+# ($DSH_HOME/profiles/<profile>/cordis.patch.yml, e.g. ~/.dsh/profiles/web/):
+#   - id: skill-filesystem
+#     config:
+#       customSkillDirs:
+#         - /mnt/md/liz/src/dsh-ext/dsh-anthropic-skills/anthropic-skills/skills
+#
+# `skill-filesystem` is mounted by @deepseek-ai/dsh-base; overriding its id keeps
+# every default root (project / user / bundled) because the provider schema
+# defaults `includeDefaultRoots` to true.
+- id: skill-filesystem
+  config:
+    customSkillDirs:
+      - /mnt/md/liz/src/dsh-ext/dsh-anthropic-skills/anthropic-skills/skills
