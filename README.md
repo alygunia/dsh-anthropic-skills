@@ -249,14 +249,46 @@ dsh --profile headless --patch <repo>/dsh-overlay.yml "<job>"
 
 | 组件 | 位置 / 内容 | 说明 |
 |---|---|---|
-| Python venv 3.12.13 | `C:\Users\alygu\.venvs\dsh312` | `python-pptx 1.0.2`、`python-docx 1.2.0`、`markitdown[pptx]`、`defusedxml`、`lxml`、`Pillow` |
+| **conda env `dsh`（Python 3.12.14）** | `C:\Users\alygu\scoop\apps\miniconda3\current\envs\dsh` | **默认 Python**（见下方「默认环境」一节）；已装 python-pptx 1.0.2、python-docx 1.2.0、markitdown[pptx]、lxml、Pillow 12.3、PyMuPDF、pypdf、CairoSVG、xlsxwriter、typst |
 | pptxgenjs | 在生成脚本所在目录 `npm i pptxgenjs` | 创建 deck 的唯一依赖 |
 | 渲染 | 本机 **PowerPoint 16.0**（COM 可用） | **不需要装 LibreOffice** |
 
-**为什么要单独建 3.12**：本机 `python` / `python3` 指向 miniconda base 的 3.9，而技能自带的
-`validate.py` / `thumbnail.py` / `clean.py` / `add_slide.py` 用了 `str | None` 与 `match`（需 ≥ 3.10），
-在 3.9 下直接报 `TypeError` / `SyntaxError`。`DSH_PYTHON` 已设为用户级环境变量指向该 venv
-（`dsh-plugin-writing-guard` 也读这个变量）。
+**为什么要 ≥ 3.10**：技能自带的 `validate.py` / `thumbnail.py` / `clean.py` / `add_slide.py` 用了
+`str | None` 与 `match` 语法，Python 3.9（miniconda base）下直接报 `TypeError` / `SyntaxError`。
+2026-09-18 起默认 Python 已切到 conda env `dsh` 的 3.12.14（做法见下方「默认环境」一节），
+`DSH_PYTHON` 也已重指到 `...\envs\dsh\python.exe`（`dsh-plugin-writing-guard` 读这个变量）。
+
+### 默认环境：conda env `dsh` 如何成为所有新 shell 的默认 Python
+
+三件事，缺一不可（都已落地）：
+
+1. **升级 env**：`conda install -n dsh python=3.12 -y`。conda 自己管理的 pillow/cffi/setuptools 会跟着
+   升到 py312 版；**pip 装的编译包会坏**——`lxml` 表现为 `import lxml` 成功但
+   `from lxml import etree` 报 `cannot import name 'etree'`（cp39 的 `.pyd` 留在 site-packages）。
+   修法：`pip install --force-reinstall --no-cache-dir lxml`。PyMuPDF 是 `cp39-abi3` 轮子，3.12 直接能用。
+2. **补装缺的包**：`pip install python-docx "markitdown[pptx]"`（pptx 用 `--force-reinstall --no-deps`
+   重装本体即可，避免把 conda 的 pillow/lxml 换成 pip 轮子）。
+3. **让新 shell 默认激活它**：conda 23.11 没有 `default_activation_env` 配置，只能在 profile 里加一行。
+   在 `D:\Users\alygu\Documents\PowerShell\profile.ps1`（pwsh 7）和
+   `C:\Users\alygu\Documents\WindowsPowerShell\profile.ps1`（Windows PowerShell 5.1）的
+   conda 初始化块**之后**追加：
+   ```powershell
+   If (Get-Command conda -ErrorAction SilentlyContinue) { conda activate dsh }
+   ```
+   已验证：新开的 pwsh 里 `python` → `...\envs\dsh\python.exe`（3.12.14）、`CONDA_DEFAULT_ENV=dsh`。
+
+> ⚠️ **pwsh 7.6 + conda 23.11 的兼容坑（根因）**：conda hook 生成的 `conda activate base`
+> 在 pwsh 7.3+ 的默认原生参数传递模式（`Windows`）下会收到**空的首参**，报
+> `conda-script.py: error: argument COMMAND: invalid choice: ''`，于是**什么都不激活**、
+> shell 静默回到 base。修法是在 profile 的 conda 块**之前**加：
+> ```powershell
+> if (Test-Path variable:PSNativeCommandArgumentPassing) { $PSNativeCommandArgumentPassing = 'Legacy' }
+> ```
+> （Windows PowerShell 5.1 没有这个变量，自动跳过，互不影响。）
+
+> ⚠️ `python3` 还有一层：venv/conda env 在 Windows 上只有 `python.exe`，`python3` 会落到
+> `C:\Users\alygu\scoop\shims\python3.exe`（base 3.9）。已在 env 根目录建硬链接
+> `python3.exe` → `python.exe` 解决（用硬链接而不是 `.bat` 转发，避免批处理弄坏引号）。
 
 > ⚠️ `DSH_PYTHON` **不能**写进 `$DSH_HOME/.env`。`DSH_` 是 DSH 的 bootstrap-only 前缀
 > （`dsh-app-boot` 的 `BOOTSTRAP_PREFIXES`），启动时读到会直接抛错拒绝启动。
@@ -315,6 +347,6 @@ New-Item -ItemType Junction -Path "$pkg\lib\word_guard" -Target "$pkg\src\word_g
 ### 一个关于 `DSH_*` 环境变量的观察
 
 在 DSH 的 pwsh 工具里读 `$env:DSH_PYTHON` 是**空的**，但插件进程确实拿到了它（错误信息显示它调用的就是
-`C:\Users\alygu\.venvs\dsh312\Scripts\python.exe`）。也就是说沙箱 shell 看到的环境变量与宿主进程并不同源——
+`C:\Users\alygu\scoop\apps\miniconda3\current\envs\dsh\python.exe`）。也就是说沙箱 shell 看到的环境变量与宿主进程并不同源——
 **不要用 shell 里的 `$env:` 去判断宿主是否读到了某个变量**。
 
