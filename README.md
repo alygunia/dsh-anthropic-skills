@@ -300,9 +300,27 @@ dsh --profile headless --patch <repo>/dsh-overlay.yml "<job>"
    中文 Windows 默认用 `gbk`，于是报 `'gbk' codec can't decode byte ...`。设了就是 `All validations PASSED!`。
 2. **DSH 沙箱下 `tempfile.mkdtemp()` 建的目录不可写**，而 `validate.py` 正是把 pptx 解包进 mkdtemp 目录，
    所以在受限会话里必然 `PermissionError: [WinError 5]`；事后连那个目录都删不掉（要提权才能删）。
-   → 结构校验这一步要么在提权会话里跑，要么在普通终端里跑。
+   → **已解决**：`scripts/validate-sb.ps1`（见下一节「结构校验的解法」），受限会话下结构校验直接可用。
 3. **npm 默认缓存被沙箱挡住**（`...\scoop\persist\nodejs-lts\cache\_logs` 拒绝访问），
    装 node 依赖要加 `--cache <可写目录>`，否则 `npm i` 直接失败。
+
+### 结构校验的解法：零 submodule 改动的沙箱包装器
+
+原则：**目录由调用方（shell）预创建，脚本只复用、绝不新建**——已先用技能真实的
+`safe_extract` / `rezip` 代码路径做过可行性验证，再落地为两个文件（都在本仓库，
+`anthropic-skills` submodule 零改动）：
+
+- `scripts/validate-sb.ps1`：预创建 `%TEMP%\office-validate-<id>` → 设 `OFFICE_TMP_DIR`
+  与 `PYTHONUTF8=1` → 调用驱动 → 退出时清理。
+- `scripts/validate_sb.py`：驱动。在 `import validate` 之前把 `tempfile.TemporaryDirectory`
+  替换为指向预建目录的替身（`cleanup` 为 no-op）。`validate.py` 原文件一行不改，
+  XSD 校验、`--original` 基线、`--auto-repair` 回写全部原样生效；未设置 `OFFICE_TMP_DIR`
+  时驱动保持原行为，便于对照与回退。
+
+```powershell
+pwsh ./scripts/validate-sb.ps1 deck.pptx
+pwsh ./scripts/validate-sb.ps1 deck.pptx --original template.pptx -v
+```
 
 ### 各步骤的可用性
 
@@ -311,7 +329,8 @@ dsh --profile headless --patch <repo>/dsh-overlay.yml "<job>"
 | 生成 deck | `node gen.cjs`（pptxgenjs） | ✅ | ✅ |
 | 内容 QA | `markitdown deck.pptx` | ✅ | ✅ |
 | 视觉 QA | PowerPoint COM `$pres.Export($dir,"JPG",1600,900)` | ✅ | ✅ |
-| 结构校验 | `python scripts/office/validate.py deck.pptx` | ❌ | ✅ |
+| 结构校验（推荐） | `pwsh ./scripts/validate-sb.ps1 deck.pptx` | ✅ | ✅ |
+| 结构校验（原始命令） | `python scripts/office/validate.py deck.pptx` | ❌ mkdtemp 被拒 | ✅ |
 
 `soffice.py` / `thumbnail.py` 依赖 LibreOffice（本机未装）。**视觉 QA 用 PowerPoint COM 导出 JPG 可以完全替代**，
 而且字体保真度更高——不再有 LibreOffice 字体替换造成的假溢出（技能文档里那一长串"QA 不可靠字体"警告因此不适用）。
