@@ -8,10 +8,10 @@
 
 ## 结论速览
 
-| 挂载方式 | 生效范围 | 本机（Windows）状态 |
+| 挂载方式 | 生效范围 | 落地状态（Windows / Linux） |
 |---|---|---|
 | 方式一：项目根 `<projectRoot>/.dsh/skills` | 仅该仓库 | ⬜ 未建，需要时按下面命令建 |
-| **方式二：用户根 `$DSH_HOME/skills`** | **所有 profile × 所有项目** | ✅ **已落地**（19 个 junction），实测实时生效 |
+| **方式二：用户根 `$DSH_HOME/skills`** | **所有 profile × 所有项目** | ✅ **已落地**（各 19 个链接：Windows 用 junction，Linux 用 symlink），实测实时生效 |
 | 方式三：patch `customSkillDirs` | 仅宿主行未被禁用的 profile（headless / sdk / acp / sdk-minimal） | ❌ 在 `web` / `dsh-tui` 下**无效**（配了也不出现技能） |
 
 下面各节按**编号顺序**（方式一 → 方式二 → 方式三）介绍；日常使用**推荐方式二**——
@@ -147,12 +147,12 @@ R=/mnt/md/liz/src/dsh-ext/dsh-anthropic-skills      # 换成你的检出路径
 mkdir -p ~/.dsh/skills
 for d in "$R"/anthropic-skills/skills/*/; do
   n=$(basename "$d")
-  [ -f "$d/SKILL.md" ] && ln -sfn "$d" ~/.dsh/skills/"$n"
+  [ -f "$d/SKILL.md" ] && ln -sfn "${d%/}" ~/.dsh/skills/"$n"
 done
 ls ~/.dsh/skills
 ```
 
-本仓库附带幂等脚本，做同样的事：
+本仓库附带一对幂等脚本（Windows / Linux 接口对齐），做同样的事：
 
 ```powershell
 pwsh ./scripts/link-user-skills.ps1                          # 创建 / 同步（已存在的跳过）
@@ -161,6 +161,14 @@ pwsh ./scripts/link-user-skills.ps1 -Remove                  # 只删本仓库�
 pwsh ./scripts/link-user-skills.ps1 -Root D:/shared/skills   # 换目标根
 ```
 
+```bash
+./scripts/link-user-skills.sh                                # 创建 / 同步（已存在的跳过）
+./scripts/link-user-skills.sh --dry-run                      # 只预览，不动文件系统
+./scripts/link-user-skills.sh --remove                       # 只删本仓库建的链接
+./scripts/link-user-skills.sh --root /srv/shared/skills      # 换目标根
+```
+
+两个脚本都只删**指向本 submodule** 的链接，绝不碰用户自己的技能目录；已存在的条目一律跳过，不覆盖。
 submodule 更新后重跑一次即可同步上游新增的技能。
 
 ### 为什么 Windows 上 junction 可行（实测，不是碰巧）
@@ -219,9 +227,30 @@ dsh --profile headless --patch <repo>/dsh-overlay.yml "<job>"
   academy-guide、canvas-design、docx、pdf、pptx、xlsx、mcp-builder、skill-creator 等 19 个技能
   当场进入可用技能列表。
 
+## 本机落地记录（Linux，2026-10-12）
+
+- 创建了 19 个软链：`/home/liz/.dsh/skills/<name>` →
+  `/mnt/md/liz/src/dsh-ext/dsh-anthropic-skills/anthropic-skills/skills/<name>`（方式二），
+  直接用的 `./scripts/link-user-skills.sh`。
+- **没有走方式三**：本机 `web` profile 同样把宿主层那行设成 `disabled: true`，与 Windows 结论一致；
+  真正做发现的是 preset 自挂的 `skill-filesystem`（默认 config）。
+- 验证：软链建好后，**运行中的 web 会话无需重启**即收到替换后的技能目录，
+  19 个技能（academy-guide、canvas-design、docx、pdf、pptx、xlsx、mcp-builder、skill-creator …）
+  当场进入可用技能列表；随即 `--dry-run` 复查为 `created : 0, kept: 19`（幂等）。
+- 该用户根原有条目（`academic-pdf-gen`、`immunostruct-colabfold`、`immunostruct-mouse-data`、
+  `immunostruct-experiment-protocol`）未被触碰，根内条目数 4 → 23。
+- 注意本机还有一个自定义 preset `liangshen`（`$DSH_HOME/.agent-presets/liangshen/`）：它同样以**默认
+  config** 挂 `skill-filesystem`，但按该 preset 自己的注释**移除了 catalog 注入**——用 `skill-search` 的
+  `skill_search` / `skill_load` 两个按需工具替代 `dsh-tool-skill`。所以在 `liangshen` 下这 19 个技能
+  **不会**出现在 `<available_skills>` 里，而是靠 `skill_search` 检索、`skill_load` 加载：发现机制照常工作，
+  只是表现面不同。判断"部署是否成功"要结合当前 preset，不能只看技能目录列表。
+- Python 环境（venv `~/venv/dsh`）与「为什么 PATH 不能用 `.env` / rc 注入」另见文末
+  「附：Linux 下的 Python 环境（venv）落地记录」。
+
 ## 验证与排错
 
-- 预览将要创建的链接：`pwsh ./scripts/link-user-skills.ps1 -WhatIfOnly`。
+- 预览将要创建的链接：`pwsh ./scripts/link-user-skills.ps1 -WhatIfOnly`
+  （Linux：`./scripts/link-user-skills.sh --dry-run`）。
 - 看组合结果：`dsh --profile web --dump-config`（会重写 `$DSH_HOME/profiles/<profile>/cordis.yml`，
   需要写权限）。**只用来确认合成，不要用来确认挂载**——务必同时看该行的 `disabled`。
 - 技能目录是热更新的：provider 监听每个已存在的根，并对尚不存在的根做轮询探测；
@@ -368,4 +397,87 @@ New-Item -ItemType Junction -Path "$pkg\lib\word_guard" -Target "$pkg\src\word_g
 在 DSH 的 pwsh 工具里读 `$env:DSH_PYTHON` 是**空的**，但插件进程确实拿到了它（错误信息显示它调用的就是
 `C:\Users\alygu\scoop\apps\miniconda3\current\envs\dsh\python.exe`）。也就是说沙箱 shell 看到的环境变量与宿主进程并不同源——
 **不要用 shell 里的 `$env:` 去判断宿主是否读到了某个变量**。
+
+## 附：Linux 下的 Python 环境（venv `~/venv/dsh`）落地记录（2026-10-12）
+
+docx / pptx / xlsx / pdf 这些技能的脚本要跑 Python（`python-pptx`、`lxml`、`defusedxml`、`pymupdf`、
+`pypdf`、`python-docx`、`markitdown`…）。本机把这套依赖集中放在 venv `~/venv/dsh`（Python 3.14），
+并让 DSH 全局使用它。
+
+### 结论：只能靠「启动 dsh 时的环境变量」，DSH 侧没有配置面
+
+四个看起来可行的注入点，实测全部走不通，只剩最后一个：
+
+| 方案 | 结果 | 证据 |
+|---|---|---|
+| profile patch / `settings.yaml` 里给 shell 工具配 env | ❌ 没有这个字段 | `dsh-bash-local` 的 `Config` 只有 `cwd` / `timeoutMs` / `maxTimeoutMs` / `maxOutputBytes` / `maxSpillBytes` / `graceMs`；`dsh-pwsh-local` 多一个 `pwshPath`；`dsh-subprocess-local` 无 `Config` |
+| `~/.zshrc` / `~/.bashrc` 里 export | ❌ 工具 shell 根本不读 rc | bash 工具以 `bash -c <cmd>` 启动（**非 login shell**，不 source `.bashrc` / `.profile`）；`BASH_ENV` 本身是 bootstrap-only |
+| `$DSH_HOME/.env` 或项目 `.env` | ❌ 会**拒绝启动** | `PATH`、`HOME`、`NODE_PATH`、`PYTHONPATH`、`PYTHONHOME`… 在 `dsh-app-boot` 的 `BOOTSTRAP_NAMES`，`DSH_` / `XDG_` / `DYLD_` / `BASH_FUNC_` 在 `BOOTSTRAP_PREFIXES`；`readEnvLayer` 命中即抛错并阻止启动 |
+| `dsh-shell-env` 注册一个变量 | ❌ 只收 `DSH_*`，且只有插件能注册 | 它是「托管 `DSH_*` 事实」的注册表，内置 `DSH_HOME` / `DSH_SHELL` / `DSH_SESSION_ID`，没有面向用户的配置入口 |
+| **启动 `dsh` 进程时的环境** | ✅ 唯一可行 | 工具 shell 继承 dsh 进程的环境：`bash-local` 只再叠加 `NO_COLOR` / `TERM` / `PAGER` / `GIT_PAGER` 和当次请求的 env |
+
+所以 **venv 必须在 `dsh` 进程启动时就在 PATH 上**，改完必须重启 dsh（`PATH` 只在进程启动时读入一次）。
+
+> ⚠️ 不要试图把 `PATH` 或 `PYTHONPATH` 写进 `.env`——那不是「不生效」，是**直接启动失败**。
+
+### 本机做法：`~/.zshrc` 里包一层 `dsh` 函数
+
+本机启动链是 `tmux → zsh → node .../dsh web`，登录 shell 是 zsh。为了**不污染其他终端的 python**，
+没有全局改 PATH，而是只给 dsh 注入：
+
+```zsh
+# >>> dsh venv (dsh-anthropic-skills) >>>
+# 仅对 dsh 进程注入 venv 与 npm 全局模块路径，不改动其他命令的 python。
+dsh() { PATH="$HOME/venv/dsh/bin:$PATH" NODE_PATH="${NODE_PATH:+$NODE_PATH:}$HOME/.npm-global/lib/node_modules" command dsh "$@"; }
+# <<< dsh venv (dsh-anthropic-skills) <<<
+```
+
+- `PATH`：让工具 shell 里的 `python` / `python3` / `pip` 解析到 venv。
+- `NODE_PATH`：本机 `pptxgenjs` 装在 **npm 全局**（`~/.npm-global/lib/node_modules`），
+  而 Node 默认**不搜**全局 `node_modules`——不加这行，从技能目录里 `require('pptxgenjs')` 直接失败。
+- 想让所有终端都用这个 venv，就把 `export PATH="$HOME/venv/dsh/bin:$PATH"` 写进 `~/.zshrc`；
+  只想给 dsh 用就保持函数形式。
+
+### venv 依赖
+
+```bash
+~/venv/dsh/bin/python -m pip install -U python-docx markitdown
+# 读 .docx 还要额外 extra，否则 markitdown 抛 MissingDependencyException：
+~/venv/dsh/bin/python -m pip install 'markitdown[docx]'
+```
+
+本机 venv 已有：`python-pptx 1.0.2`、`lxml 6.1.3`、`defusedxml 0.7.1`、`Pillow`、`pymupdf`、`pypdf`、
+`python-docx`、`markitdown`。npm 侧 `docx` 装在工作区（见下），`pptxgenjs` 用全局的。
+
+### 生效与验证
+
+改完 `~/.zshrc` 后**必须重启 dsh**：
+
+```bash
+pgrep -f 'dsh web'      # 拿到 PID
+kill <PID>              # 在 tmux 的那个 zsh 里
+dsh web                 # 函数生效，新会话的 bash 工具即带 venv
+```
+
+重启后在任意 dsh 会话的 bash 工具里验证：
+
+```bash
+which python3 && python3 -c "import pptx, docx; print('ok')"
+```
+
+### 两个 Linux 沙箱坑（均已实测）
+
+1. **npm 缓存默认目录被拦**：`~/.npm/_logs` 不可写，`npm install` 报
+   `Log files were not written due to an error writing to the directory`。把缓存指到工作区内即可：
+   `npm install --cache "$PWD/.npm-cache" docx`。
+2. **读 `/proc/<pid>/environ` 被拒**（`Permission denied`）：想核对运行中 dsh 的真实 PATH 时读不到，
+   只能从启动它的那个 shell 推断，或重启后再验证。
+
+### 冒烟测试结论（2026-10-12）
+
+用上述环境跑通了 docx 与 pptx 两个技能：`docx-js` 生成 `memo.docx`、`pptxgenjs` 生成 4 页 `deck.pptx`，
+两者都通过技能自带 `scripts/office/validate.py`（`All validations PASSED`），
+再用 `soffice.py --headless --convert-to pdf` + `pdftoppm` 渲染成图逐页做可视化 QA，无溢出、无重叠、无错位。
+内容 QA 分别用需要 `pandoc`（docx）与 `markitdown`（pptx）。
+
 
